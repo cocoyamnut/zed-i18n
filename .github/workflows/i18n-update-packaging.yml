@@ -18,20 +18,44 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  HOMEBREW_REPOSITORY: LI-NA/homebrew-zed-i18n
-  SCOOP_REPOSITORY: LI-NA/scoop-zed-i18n
+  HOMEBREW_REPOSITORY: cocoyamnut/homebrew-zed-i18n
+  SCOOP_REPOSITORY: cocoyamnut/scoop-zed-i18n
   RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
 
 jobs:
+  packaging-access:
+    name: Check packaging access
+    runs-on: ubuntu-24.04
+    outputs:
+      enabled: ${{ steps.token.outputs.enabled }}
+    steps:
+      - name: Check packaging token
+        id: token
+        env:
+          PACKAGING_REPOS_TOKEN: ${{ secrets.PACKAGING_REPOS_TOKEN }}
+        run: |
+          if [[ -n "$PACKAGING_REPOS_TOKEN" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Packaging skipped: configure PACKAGING_REPOS_TOKEN with Contents read/write access to the two packaging repositories."
+          fi
+
   update-packaging:
+    needs: packaging-access
     name: Update packaging repositories
+    # Only this fork owns the configured packaging repositories.
     if: >-
       ${{
-        github.event_name == 'workflow_dispatch' ||
+        github.repository == 'cocoyamnut/zed-i18n' &&
+        needs.packaging-access.outputs.enabled == 'true' &&
         (
-          github.event.release.prerelease == false &&
-          startsWith(github.event.release.tag_name, 'v') &&
-          contains(github.event.release.tag_name, '-i18n.')
+          github.event_name == 'workflow_dispatch' ||
+          (
+            github.event.release.prerelease == false &&
+            startsWith(github.event.release.tag_name, 'v') &&
+            contains(github.event.release.tag_name, '-i18n.')
+          )
         )
       }}
     runs-on: ubuntu-24.04
@@ -49,16 +73,6 @@ jobs:
 
       - name: Install Python
         run: uv python install 3.12
-
-      - name: Validate packaging token
-        env:
-          PACKAGING_REPOS_TOKEN: ${{ secrets.PACKAGING_REPOS_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$PACKAGING_REPOS_TOKEN" ]]; then
-            echo "::error::PACKAGING_REPOS_TOKEN must have Contents: Read and write access to ${HOMEBREW_REPOSITORY} and ${SCOOP_REPOSITORY}."
-            exit 1
-          fi
 
       - name: Download release metadata
         env:
@@ -170,13 +184,16 @@ jobs:
         run: |
           set -euo pipefail
           # Link the working tree so validation includes the generated, uncommitted cask.
-          tap_parent="$(brew --repository)/Library/Taps/li-na"
+          tap_owner="${HOMEBREW_REPOSITORY%%/*}"
+          tap_repo="${HOMEBREW_REPOSITORY#*/}"
+          tap_name="${tap_owner}/${tap_repo#homebrew-}"
+          tap_parent="$(brew --repository)/Library/Taps/${tap_owner,,}"
           mkdir -p "$tap_parent"
-          ln -s "$GITHUB_WORKSPACE/packaging/homebrew" "$tap_parent/homebrew-zed-i18n"
-          brew trust li-na/zed-i18n
-          brew readall --os=all --arch=all li-na/zed-i18n
+          ln -s "$GITHUB_WORKSPACE/packaging/homebrew" "$tap_parent/$tap_repo"
+          brew trust "$tap_name"
+          brew readall --os=all --arch=all "$tap_name"
           brew ruby -- tests/check_homebrew_cask.rb \
-            "$tap_parent/homebrew-zed-i18n/Casks/zed-i18n.rb" release-assets/manifest.json
+            "$tap_parent/$tap_repo/Casks/zed-i18n.rb" release-assets/manifest.json
 
       - name: Commit and push packaging repositories
         run: |

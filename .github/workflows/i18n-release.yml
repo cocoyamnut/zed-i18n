@@ -696,6 +696,8 @@ jobs:
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
 
       - name: Update packaging
+        # Dispatch only after all assets are validated and the release is public.
+        if: github.repository == 'cocoyamnut/zed-i18n'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           INPUT_RELEASE_TAG: ${{ inputs.release_tag || '' }}

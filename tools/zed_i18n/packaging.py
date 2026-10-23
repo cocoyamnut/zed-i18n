@@ -56,6 +56,7 @@ def generate_packaging_files(
 
 
 def generate_homebrew_cask(manifest: dict[str, Any]) -> str:
+    _repository_url(manifest)
     if _is_universal_manifest(manifest):
         return _generate_universal_homebrew_cask(manifest)
 
@@ -80,7 +81,7 @@ def generate_homebrew_cask(manifest: dict[str, Any]) -> str:
                 "  end",
             ]
         )
-    lines.extend(_homebrew_platform_lines(locale_specific=True))
+    lines.extend(_homebrew_platform_lines(manifest, locale_specific=True))
     return "\n".join(lines) + "\n"
 
 
@@ -94,7 +95,7 @@ def _generate_universal_homebrew_cask(manifest: dict[str, Any]) -> str:
         f'  version "{version}"',
         f"  sha256 {_homebrew_checksums(manifest, None)}",
     ]
-    lines.extend(_homebrew_platform_lines(locale_specific=False))
+    lines.extend(_homebrew_platform_lines(manifest, locale_specific=False))
     return "\n".join(lines) + "\n"
 
 
@@ -114,10 +115,11 @@ def _homebrew_checksums(manifest: dict[str, Any], locale: str | None) -> str:
     return ", ".join(checksums)
 
 
-def _homebrew_platform_lines(*, locale_specific: bool) -> list[str]:
+def _homebrew_platform_lines(manifest: dict[str, Any], *, locale_specific: bool) -> list[str]:
+    repository_url = _repository_url(manifest)
     locale_segment = "-#{language}" if locale_specific else ""
     release_url = (
-        "https://github.com/LI-NA/zed-i18n/releases/download/"
+        f"{repository_url}/releases/download/"
         "v#{version.csv.first}-i18n.#{version.csv.second}"
     )
     return [
@@ -156,13 +158,14 @@ def _homebrew_platform_lines(*, locale_specific: bool) -> list[str]:
         "",
         '  name "Zed i18n"',
         '  desc "Localized build of the Zed editor"',
-        '  homepage "https://github.com/LI-NA/zed-i18n"',
+        f'  homepage "{repository_url}"',
         "end",
     ]
 
 
 def _scoop_app_manifest(
     *,
+    repository_url: str,
     version: str,
     description: str,
     x64: dict[str, Any],
@@ -176,7 +179,7 @@ def _scoop_app_manifest(
     app: dict[str, Any] = {
         "version": version,
         "description": description,
-        "homepage": "https://github.com/LI-NA/zed-i18n",
+        "homepage": repository_url,
         "license": "GPL-3.0",
         "architecture": {
             "64bit": {
@@ -193,20 +196,20 @@ def _scoop_app_manifest(
         "env_set": {"ZED_UPDATE_EXPLANATION": update_message},
         "post_install": POST_INSTALL_LINES,
         "checkver": {
-            "url": "https://github.com/LI-NA/zed-i18n/releases/latest",
+            "url": f"{repository_url}/releases/latest",
             "regex": r"/releases/tag/v([\d.]+-i18n\.\d+)",
         },
         "autoupdate": {
             "architecture": {
                 "64bit": {
-                    "url": f"https://github.com/LI-NA/zed-i18n/releases/download/v$version/Zed-i18n{locale_segment}-windows-x86_64.zip"
+                    "url": f"{repository_url}/releases/download/v$version/Zed-i18n{locale_segment}-windows-x86_64.zip"
                 },
                 "arm64": {
-                    "url": f"https://github.com/LI-NA/zed-i18n/releases/download/v$version/Zed-i18n{locale_segment}-windows-aarch64.zip"
+                    "url": f"{repository_url}/releases/download/v$version/Zed-i18n{locale_segment}-windows-aarch64.zip"
                 },
             },
             "hash": {
-                "url": "https://github.com/LI-NA/zed-i18n/releases/download/v$version/SHA256SUMS.txt"
+                "url": f"{repository_url}/releases/download/v$version/SHA256SUMS.txt"
             },
         },
     }
@@ -216,6 +219,7 @@ def _scoop_app_manifest(
 
 
 def generate_scoop_manifests(manifest: dict[str, Any]) -> dict[str, str]:
+    _repository_url(manifest)
     if _is_universal_manifest(manifest):
         return _generate_universal_scoop_manifests(manifest)
 
@@ -235,6 +239,7 @@ def generate_scoop_manifests(manifest: dict[str, Any]) -> dict[str, str]:
         x64 = _required_asset(assets, "x86_64", locale, "windows")
         arm64 = _required_asset(assets, "aarch64", locale, "windows")
         app = _scoop_app_manifest(
+            repository_url=_repository_url(manifest),
             version=version,
             description=f"Localized build of the Zed editor ({locale})",
             x64=x64,
@@ -258,6 +263,7 @@ def _generate_universal_scoop_manifests(manifest: dict[str, Any]) -> dict[str, s
 
     output = {}
     universal = _scoop_app_manifest(
+        repository_url=_repository_url(manifest),
         version=version,
         description="Localized build of the Zed editor",
         x64=x64,
@@ -270,6 +276,7 @@ def _generate_universal_scoop_manifests(manifest: dict[str, Any]) -> dict[str, s
 
     for locale in legacy_locales:
         app = _scoop_app_manifest(
+            repository_url=_repository_url(manifest),
             version=version,
             description=f"Localized build of the Zed editor ({locale})",
             x64=x64,
@@ -285,6 +292,24 @@ def _generate_universal_scoop_manifests(manifest: dict[str, Any]) -> dict[str, s
         )
         output[f"zed-i18n-{locale}.json"] = json.dumps(app, indent=2, ensure_ascii=False) + "\n"
     return output
+
+
+def _repository_url(manifest: dict[str, Any]) -> str:
+    repository = manifest.get("repository")
+    if not isinstance(repository, str) or not re.fullmatch(
+        r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}",
+        repository,
+    ):
+        raise ValueError("release manifest repository must be a GitHub owner/repository")
+    repository_url = f"https://github.com/{repository}"
+    for asset in manifest.get("assets", []):
+        download_url = asset.get("download_url")
+        if download_url and (
+            not isinstance(download_url, str)
+            or not download_url.startswith(f"{repository_url}/releases/download/")
+        ):
+            raise ValueError("release asset download_url does not match manifest repository")
+    return repository_url
 
 
 def cask_version(manifest: dict[str, Any]) -> str:

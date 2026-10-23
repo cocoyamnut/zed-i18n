@@ -163,6 +163,56 @@ class PackagingTests(unittest.TestCase):
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
 
+    def test_fork_packaging_uses_its_own_repository_everywhere(self) -> None:
+        for factory in (sample_manifest, sample_universal_manifest):
+            with self.subTest(mode=factory.__name__):
+                manifest = factory()
+                manifest["repository"] = "cocoyamnut/zed-i18n"
+                for asset in manifest["assets"]:
+                    asset["download_url"] = asset["download_url"].replace(
+                        "LI-NA/zed-i18n", "cocoyamnut/zed-i18n"
+                    )
+                url = "https://github.com/cocoyamnut/zed-i18n"
+                cask = generate_homebrew_cask(manifest)
+                self.assertNotIn("LI-NA", cask)
+                self.assertIn(f'homepage "{url}"', cask)
+                self.assertEqual(cask.count(f'{url}/releases/download/'), 2)
+                for filename, text in generate_scoop_manifests(manifest).items():
+                    with self.subTest(filename=filename):
+                        self.assertNotIn("LI-NA", text)
+                        app = json.loads(text)
+                        self.assertEqual(app["homepage"], url)
+                        self.assertEqual(app["checkver"]["url"], f"{url}/releases/latest")
+                        for architecture in ("64bit", "arm64"):
+                            self.assertTrue(app["architecture"][architecture]["url"].startswith(
+                                f"{url}/releases/download/v1.4.4-i18n.2/"
+                            ))
+                            self.assertTrue(app["autoupdate"]["architecture"][architecture]["url"].startswith(
+                                f"{url}/releases/download/v$version/"
+                            ))
+                        self.assertEqual(app["autoupdate"]["hash"]["url"],
+                                         f"{url}/releases/download/v$version/SHA256SUMS.txt")
+
+    def test_packaging_rejects_missing_or_unsafe_repository(self) -> None:
+        for repository in (None, "", 123, "https://github.com/owner/repo", "owner/repo/extra",
+                           "../repo", "owner/..", 'owner/repo"', "owner/repo\n",
+                           "owner/#{system('bad')}", "owner/repo?redirect=evil"):
+            for generator in (generate_homebrew_cask, generate_scoop_manifests):
+                with self.subTest(repository=repository, generator=generator.__name__):
+                    manifest = sample_manifest()
+                    manifest["repository"] = repository
+                    with self.assertRaisesRegex(ValueError, "repository"):
+                        generator(manifest)
+
+    def test_packaging_rejects_assets_from_a_different_repository(self) -> None:
+        for factory in (sample_manifest, sample_universal_manifest):
+            for generator in (generate_homebrew_cask, generate_scoop_manifests):
+                with self.subTest(mode=factory.__name__, generator=generator.__name__):
+                    manifest = factory()
+                    manifest["repository"] = "cocoyamnut/zed-i18n"
+                    with self.assertRaisesRegex(ValueError, "download_url does not match"):
+                        generator(manifest)
+
     def test_generates_homebrew_cask_with_csv_version_and_language_assets(self) -> None:
         cask = generate_homebrew_cask(sample_manifest())
 
@@ -440,22 +490,22 @@ class PackagingWorkflowTests(unittest.TestCase):
         self.assertIn("SHA256SUMS.txt", workflow)
         self.assertIn("uv run zed-i18n generate-packaging", workflow)
         self.assertIn("--require-all-translations", workflow)
-        self.assertIn("LI-NA/homebrew-zed-i18n", workflow)
-        self.assertIn("LI-NA/scoop-zed-i18n", workflow)
+        self.assertIn("cocoyamnut/homebrew-zed-i18n", workflow)
+        self.assertIn("cocoyamnut/scoop-zed-i18n", workflow)
         self.assertIn("diff --cached --quiet", workflow)
 
     def test_homebrew_validates_generated_working_tree_before_publishing(self) -> None:
         workflow = (Path.cwd() / ".github" / "workflows" / "i18n-update-packaging.yml").read_text(
             encoding="utf-8"
         )
-        validation = workflow.index("brew readall --os=all --arch=all li-na/zed-i18n")
+        validation = workflow.index('brew readall --os=all --arch=all "$tap_name"')
         self.assertLess(workflow.index("uv run zed-i18n generate-packaging"), validation)
-        self.assertLess(workflow.index("brew trust li-na/zed-i18n"), validation)
+        self.assertLess(workflow.index('brew trust "$tap_name"'), validation)
         self.assertLess(validation, workflow.index("- name: Commit and push packaging repositories"))
         contract = workflow.index("brew ruby -- tests/check_homebrew_cask.rb")
         self.assertLess(validation, contract)
         self.assertLess(contract, workflow.index("- name: Commit and push packaging repositories"))
         self.assertIn(
-            'ln -s "$GITHUB_WORKSPACE/packaging/homebrew" "$tap_parent/homebrew-zed-i18n"',
+            'ln -s "$GITHUB_WORKSPACE/packaging/homebrew" "$tap_parent/$tap_repo"',
             workflow,
         )
