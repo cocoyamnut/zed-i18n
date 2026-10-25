@@ -386,6 +386,23 @@ class CiReleaseTests(unittest.TestCase):
             ],
         )
 
+    def test_release_identity_requires_explicit_build_declaration(self) -> None:
+        dist = self.temp_root / "dist"
+        dist.mkdir()
+        (dist / "zed-i18n-linux-x86_64.tar.gz").write_bytes(b"test payload")
+        for identity in (None, "zed-stable"):
+            generate_release_metadata(
+                root=self.temp_root, dist_dir=dist,
+                manifest_path=dist / "manifest.json", checksums_path=dist / "SHA256SUMS.txt",
+                release_tag="v1.2.5-i18n.2", repository="owner/repo", run_id="123",
+                installed_identity=identity,
+            )
+            manifest = json.loads((dist / "manifest.json").read_text())
+            if identity is None:
+                self.assertNotIn("installed_identity", manifest)
+            else:
+                self.assertEqual(manifest["installed_identity"], identity)
+
     def test_generates_manifest_and_checksums(self) -> None:
         dist_dir = self.temp_root / "dist"
         dist_dir.mkdir()

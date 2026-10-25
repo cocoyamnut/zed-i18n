@@ -30,14 +30,14 @@ from .packaging import RELEASE_TAG_PATTERN
 
 DEFAULT_REPOSITORY = "LI-NA/zed-i18n"
 MAINTAINER = "LI-NA <LI-NA@users.noreply.github.com>"
-INSTALL_ROOT = "usr/lib/zed-i18n"
-CLI_NAME = "zed-i18n"
-ICON_NAME = "zed-i18n"
+# Upstream distributes a user-scoped tarball, not a Debian package. This is
+# its system-package counterpart; package ownership stays with zed-i18n.
+INSTALL_ROOT = "usr/lib/zed"
+CLI_NAME = "zed"
+ICON_NAME = "zed"
 VIRTUAL_PACKAGE = "zed-i18n"
-# Fixed regardless of the bundle's APP_ID so an unpatched (distribution_patches
-# disabled) build can never install /usr/share/applications/dev.zed.Zed.desktop
-# and collide with the official Zed desktop ID.
-DESKTOP_FILE_NAME = "dev.zed-i18n.Zed.desktop"
+# Match the stable application identity emitted by the upstream Linux bundle.
+DESKTOP_FILE_NAME = "dev.zed.Zed.desktop"
 
 DEB_ARCHITECTURES = {"x86_64": "amd64", "aarch64": "arm64"}
 LINUX_TARBALL_PATTERNS = (
@@ -171,7 +171,7 @@ def control_file(
         # other locale (or the universal package) replaces it.
         virtual_fields = (
             f"Provides: {VIRTUAL_PACKAGE}\n"
-            f"Conflicts: {VIRTUAL_PACKAGE}\n"
+            f"Conflicts: {VIRTUAL_PACKAGE}, zed\n"
             f"Replaces: {VIRTUAL_PACKAGE}\n"
         )
         description = (
@@ -188,7 +188,7 @@ def control_file(
         # the same name (dpkg never treats a package as conflicting with
         # itself), so `apt install ./zed-i18n-linux-<arch>.deb` replaces them.
         virtual_fields = (
-            f"Conflicts: {VIRTUAL_PACKAGE}\n"
+            f"Conflicts: {VIRTUAL_PACKAGE}, zed\n"
             f"Replaces: {VIRTUAL_PACKAGE}\n"
         )
         description = (
@@ -360,6 +360,11 @@ def build_deb_from_tarball(
             raise ValueError("Linux archive contains no application icons")
 
         desktop_member = desktop_sources[0]
+        if PurePosixPath(desktop_member.name).name != DESKTOP_FILE_NAME:
+            raise ValueError(
+                "Linux archive must use the official stable desktop identity "
+                f"{DESKTOP_FILE_NAME}; rebuild it with the current distribution overlay"
+            )
         desktop_text = rewrite_desktop_entry(
             _read_member(archive, desktop_member).decode("utf-8"),
             CLI_NAME,

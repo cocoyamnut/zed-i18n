@@ -52,6 +52,9 @@ class PackagingWorkflowTests(unittest.TestCase):
 
     def test_release_dispatches_owned_packaging_only_after_asset_validation_and_publication(self) -> None:
         workflow = Path('.github/workflows/i18n-release.yml').read_text()
+        self.assertEqual(workflow.count("--installed-identity zed-stable"), 1)
+        metadata = workflow.split("ci_release metadata", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("--installed-identity zed-stable", metadata)
         step = workflow.split('      - name: Update packaging\n', 1)[1]
         self.assertIn("        if: github.repository == 'cocoyamnut/zed-i18n'\n", step)
         self.assertIn('gh workflow run i18n-update-packaging.yml', step)

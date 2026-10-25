@@ -21,7 +21,7 @@ FIXTURE_DESKTOP = (
     "[Desktop Entry]\n"
     "Version=1.0\n"
     "Type=Application\n"
-    "Name=Zed i18n\n"
+    "Name=Zed\n"
     "GenericName=Text Editor\n"
     "TryExec=zed\n"
     "Exec=zed %U\n"
@@ -81,7 +81,7 @@ class DebTests(unittest.TestCase):
         else:
             tar.addfile(info)
 
-    def make_tarball(self, path: Path, desktop_name: str = "dev.zed-i18n.Zed.desktop") -> Path:
+    def make_tarball(self, path: Path, desktop_name: str = "dev.zed.Zed.desktop") -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         with tarfile.open(path, "w:gz") as tar:
             self.add_member(tar, "zed.app", mode=0o755, typ=tarfile.DIRTYPE)
@@ -185,30 +185,30 @@ class DebTests(unittest.TestCase):
         )
         self.assertNotIn("Recommends:", control)
         self.assertIn("Provides: zed-i18n\n", control)
-        self.assertIn("Conflicts: zed-i18n\n", control)
+        self.assertIn("Conflicts: zed-i18n, zed\n", control)
         self.assertIn("Homepage: https://github.com/owner/repo\n", control)
         self.assertIn("Description: Localized build of the Zed editor (ko-KR)\n", control)
 
         editor_md5 = hashlib.md5(b"editor-binary").hexdigest()
-        self.assertIn(f"{editor_md5}  usr/lib/zed-i18n/libexec/zed-editor\n", md5sums)
+        self.assertIn(f"{editor_md5}  usr/lib/zed/libexec/zed-editor\n", md5sums)
         self.assertNotIn("./usr", md5sums)
 
         with tarfile.open(fileobj=io.BytesIO(members["data.tar.xz"]), mode="r:xz") as tar:
             names = tar.getnames()
-            launcher_info = tar.getmember("./usr/bin/zed-i18n")
+            launcher_info = tar.getmember("./usr/bin/zed")
             launcher = tar.extractfile(launcher_info).read().decode("utf-8")
-            desktop_info = tar.getmember("./usr/share/applications/dev.zed-i18n.Zed.desktop")
+            desktop_info = tar.getmember("./usr/share/applications/dev.zed.Zed.desktop")
             desktop = tar.extractfile(desktop_info).read().decode("utf-8")
-            editor_info = tar.getmember("./usr/lib/zed-i18n/libexec/zed-editor")
-            bundled_lib_info = tar.getmember("./usr/lib/zed-i18n/lib/libstdc++.so.6")
-            icon = tar.extractfile("./usr/share/icons/hicolor/512x512/apps/zed-i18n.png").read()
+            editor_info = tar.getmember("./usr/lib/zed/libexec/zed-editor")
+            bundled_lib_info = tar.getmember("./usr/lib/zed/lib/libstdc++.so.6")
+            icon = tar.extractfile("./usr/share/icons/hicolor/512x512/apps/zed.png").read()
 
         self.assertIn("./usr", names)
-        self.assertLess(names.index("./usr"), names.index("./usr/bin/zed-i18n"))
-        self.assertIn("./usr/lib/zed-i18n/bin/zed", names)
-        self.assertIn("./usr/lib/zed-i18n/licenses.md", names)
+        self.assertLess(names.index("./usr"), names.index("./usr/bin/zed"))
+        self.assertIn("./usr/lib/zed/bin/zed", names)
+        self.assertIn("./usr/lib/zed/licenses.md", names)
         self.assertIn("./usr/share/doc/zed-i18n-ko-kr/copyright", names)
-        self.assertIn("./usr/share/icons/hicolor/1024x1024/apps/zed-i18n.png", names)
+        self.assertIn("./usr/share/icons/hicolor/1024x1024/apps/zed.png", names)
 
         self.assertEqual(launcher_info.mode, 0o755)
         self.assertEqual((launcher_info.uid, launcher_info.gid), (0, 0))
@@ -218,14 +218,14 @@ class DebTests(unittest.TestCase):
         self.assertIn("https://github.com/owner/repo/releases/latest", launcher)
         self.assertIn("--uninstall)\n", launcher)
         self.assertIn("sudo apt remove zed-i18n-ko-kr", launcher)
-        self.assertLess(launcher.index("--uninstall"), launcher.index("exec /usr/lib/zed-i18n/bin/zed"))
-        self.assertIn('exec /usr/lib/zed-i18n/bin/zed "$@"\n', launcher)
+        self.assertLess(launcher.index("--uninstall"), launcher.index("exec /usr/lib/zed/bin/zed"))
+        self.assertIn('exec /usr/lib/zed/bin/zed "$@"\n', launcher)
 
         self.assertEqual(desktop_info.mode, 0o644)
-        self.assertIn("Exec=zed-i18n %U\n", desktop)
-        self.assertIn("Exec=zed-i18n --new %U\n", desktop)
-        self.assertIn("TryExec=zed-i18n\n", desktop)
-        self.assertIn("Icon=zed-i18n\n", desktop)
+        self.assertIn("Exec=zed %U\n", desktop)
+        self.assertIn("Exec=zed --new %U\n", desktop)
+        self.assertIn("TryExec=zed\n", desktop)
+        self.assertIn("Icon=zed\n", desktop)
 
         self.assertEqual(editor_info.mode, 0o755)
         self.assertEqual(bundled_lib_info.mode, 0o644)
@@ -253,7 +253,7 @@ class DebTests(unittest.TestCase):
         # The real package name is zed-i18n now, so it must not provide itself;
         # Conflicts/Replaces still take over the per-locale providers.
         self.assertNotIn("Provides:", control)
-        self.assertIn("Conflicts: zed-i18n\n", control)
+        self.assertIn("Conflicts: zed-i18n, zed\n", control)
         self.assertIn("Replaces: zed-i18n\n", control)
         self.assertIn("Description: Localized build of the Zed editor\n", control)
         self.assertIn("every supported display", control)
@@ -261,37 +261,23 @@ class DebTests(unittest.TestCase):
 
         with tarfile.open(fileobj=io.BytesIO(members["data.tar.xz"]), mode="r:xz") as tar:
             names = tar.getnames()
-            launcher = tar.extractfile("./usr/bin/zed-i18n").read().decode("utf-8")
+            launcher = tar.extractfile("./usr/bin/zed").read().decode("utf-8")
 
         self.assertIn("./usr/share/doc/zed-i18n/copyright", names)
         self.assertIn('sudo apt remove zed-i18n" >&2', launcher)
 
-    def test_build_deb_fixes_system_desktop_name_for_unpatched_bundles(self) -> None:
+    def test_build_deb_rejects_legacy_isolated_app_identity(self) -> None:
         tarball = self.make_tarball(
-            self.temp_root / "zed-i18n-ko-KR-linux-x86_64.tar.gz",
-            desktop_name="dev.zed.Zed.desktop",
+            self.temp_root / "zed-i18n-linux-x86_64.tar.gz",
+            desktop_name="dev.zed-i18n.Zed.desktop",
         )
-        output = self.temp_root / "zed-i18n-ko-KR-linux-x86_64.deb"
-
-        build_deb_from_tarball(
-            tarball,
-            output,
-            locale="ko-KR",
-            arch="x86_64",
-            version="1.2.5+i18n.4",
-            repository="owner/repo",
-            glibc_floor="2.31",
-        )
-
-        _, members = read_ar_archive(output)
-        with tarfile.open(fileobj=io.BytesIO(members["data.tar.xz"]), mode="r:xz") as tar:
-            names = tar.getnames()
-
-        self.assertIn("./usr/share/applications/dev.zed-i18n.Zed.desktop", names)
-        self.assertNotIn("./usr/share/applications/dev.zed.Zed.desktop", names)
-        # The untouched in-app copy keeps its original name; desktop
-        # environments do not scan /usr/lib for entries.
-        self.assertIn("./usr/lib/zed-i18n/share/applications/dev.zed.Zed.desktop", names)
+        output = self.temp_root / "zed-i18n-linux-x86_64.deb"
+        with self.assertRaisesRegex(ValueError, "official stable desktop identity"):
+            build_deb_from_tarball(
+                tarball, output, locale=None, arch="x86_64",
+                version="1.2.5+i18n.4", repository="owner/repo", glibc_floor="2.31",
+            )
+        self.assertFalse(output.exists())
 
     def test_launcher_script_blocks_upstream_uninstall(self) -> None:
         script = launcher_script("owner/repo", "zed-i18n-ja-jp")
@@ -299,7 +285,7 @@ class DebTests(unittest.TestCase):
         self.assertIn("--uninstall)\n", script)
         self.assertIn("sudo apt remove zed-i18n-ja-jp", script)
         self.assertIn("exit 1\n", script)
-        self.assertLess(script.index("exit 1"), script.index("exec /usr/lib/zed-i18n/bin/zed"))
+        self.assertLess(script.index("exit 1"), script.index("exec /usr/lib/zed/bin/zed"))
         # "--" ends option parsing, so a file literally named --uninstall stays
         # openable; the guard must stop scanning there.
         self.assertLess(script.index("--)"), script.index("--uninstall)"))

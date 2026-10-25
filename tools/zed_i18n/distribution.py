@@ -9,19 +9,19 @@ import tomllib
 
 @dataclass(frozen=True)
 class DistributionConfig:
-    product_name: str = "Zed i18n"
+    product_name: str = "Zed"
     product_slug: str = "zed-i18n"
-    macos_bundle_id: str = "dev.zed-i18n.Zed"
-    linux_app_id: str = "dev.zed-i18n.Zed"
-    windows_app_identifier: str = "ZedI18n-Editor-Stable"
-    windows_app_id: str = "{{48948123-2766-49EA-9C78-31B8096DE3D6}"
-    windows_app_user_id: str = "ZedI18n.Zed"
-    windows_appx_name: str = "ZedI18n.Zed"
-    windows_appx_full_name: str = "ZedI18n.Zed_1.0.0.0_neutral__japxn1gcva8rg"
-    windows_mutex: str = "ZedI18n-Editor-Stable-Instance-Mutex"
-    windows_registry_value: str = "ZedI18n"
-    windows_setup_name: str = "Zed-i18n"
-    windows_shell_name_short: str = "Z&ed i18n"
+    macos_bundle_id: str = "dev.zed.Zed"
+    linux_app_id: str = "dev.zed.Zed"
+    windows_app_identifier: str = "Zed-Editor-Stable"
+    windows_app_id: str = "{{2DB0DA96-CA55-49BB-AF4F-64AF36A86712}"
+    windows_app_user_id: str = "ZedIndustries.Zed"
+    windows_appx_name: str = "ZedIndustries.Zed"
+    windows_appx_full_name: str = "ZedIndustries.Zed_1.0.0.0_neutral__japxn1gcva8rg"
+    windows_mutex: str = "Zed-Stable-Instance-Mutex"
+    windows_registry_value: str = "Zed"
+    windows_setup_name: str = "Zed"
+    windows_shell_name_short: str = "Z&ed"
     publisher_name: str = "zed-i18n"
     publisher_url: str = ""
     update_enabled: bool = True
@@ -247,7 +247,6 @@ def patch_windows_resources(zed_root: Path, config: DistributionConfig) -> None:
             'Description="Zed explorer command injector"',
             f'Description="{config.product_name} explorer command injector"',
         ),
-        ('Id="OpenWithZed"', 'Id="OpenWithZedI18n"'),
         ('<com:SurrogateServer DisplayName="Zed">', f'<com:SurrogateServer DisplayName="{config.product_name}">'),
     ]
     _write(appx, _replace_many(text, replacements, appx))

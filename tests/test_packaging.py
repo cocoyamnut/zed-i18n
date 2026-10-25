@@ -87,6 +87,7 @@ def sample_manifest(locales: tuple[str, ...] = ("ja-JP", "ko-KR")) -> dict[str, 
         )
     return {
         "schema": 2,
+        "installed_identity": "zed-stable",
         "zed_version": "v1.4.4",
         "i18n_revision": 2,
         "release_tag": "v1.4.4-i18n.2",
@@ -146,6 +147,7 @@ def sample_universal_manifest(
             assets.append(alias)
     return {
         "schema": 2,
+        "installed_identity": "zed-stable",
         "zed_version": "v1.4.4",
         "i18n_revision": 2,
         "release_tag": "v1.4.4-i18n.2",
@@ -164,7 +166,7 @@ class PackagingTests(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_fork_packaging_uses_its_own_repository_everywhere(self) -> None:
-        for factory in (sample_manifest, sample_universal_manifest):
+        for factory in (sample_universal_manifest,):
             with self.subTest(mode=factory.__name__):
                 manifest = factory()
                 manifest["repository"] = "cocoyamnut/zed-i18n"
@@ -192,6 +194,31 @@ class PackagingTests(unittest.TestCase):
                             ))
                         self.assertEqual(app["autoupdate"]["hash"]["url"],
                                          f"{url}/releases/download/v$version/SHA256SUMS.txt")
+
+    def test_packaging_requires_explicit_stable_identity_build_declaration(self) -> None:
+        # This declaration gates compatibility with the new build layout; it
+        # does not replace native binary/installer verification before release.
+        for factory in (sample_manifest, sample_universal_manifest):
+            for identity in (None, "", "zed-i18n", "Zed", True):
+                manifest = factory()
+                if identity is None:
+                    manifest.pop("installed_identity")
+                else:
+                    manifest["installed_identity"] = identity
+                for generator in (generate_homebrew_cask, generate_scoop_manifests):
+                    with self.subTest(mode=factory.__name__, identity=identity,
+                                      generator=generator.__name__):
+                        with self.assertRaisesRegex(ValueError, "installed_identity.*zed-stable"):
+                            generator(manifest)
+                manifest_path = self.tmp / "manifest.json"
+                manifest_path.parent.mkdir(parents=True, exist_ok=True)
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+                cask_path = self.tmp / "out" / "zed-i18n.rb"
+                bucket_path = self.tmp / "bucket"
+                with self.assertRaisesRegex(ValueError, "installed_identity.*zed-stable"):
+                    generate_packaging_files(manifest_path, cask_path, bucket_path)
+                self.assertFalse(cask_path.exists())
+                self.assertFalse(bucket_path.exists())
 
     def test_packaging_rejects_missing_or_unsafe_repository(self) -> None:
         for repository in (None, "", 123, "https://github.com/owner/repo", "owner/repo/extra",
@@ -221,9 +248,24 @@ class PackagingTests(unittest.TestCase):
         self.assertIn('language "ko", default: true do', cask)
         self.assertIn('language "ja" do', cask)
         self.assertIn('sha256 arm: "mac-arm-ko-KR", intel: "mac-intel-ko-KR"', cask)
-        self.assertIn('binary "#{appdir}/Zed i18n.app/Contents/MacOS/cli", target: "zed-i18n"', cask)
+        self.assertIn('binary "#{appdir}/Zed.app/Contents/MacOS/cli", target: "zed"', cask)
         self.assertIn("auto_updates true", cask)
         self.assertTrue(cask.endswith("\n"))
+
+    def test_packaging_uses_official_installed_identity_not_fork_tokens(self) -> None:
+        for factory in (sample_manifest, sample_universal_manifest):
+            manifest = factory()
+            cask = generate_homebrew_cask(manifest)
+            self.assertIn('cask "zed-i18n" do', cask)
+            self.assertIn('app "Zed.app"', cask)
+            self.assertIn('name "Zed"', cask)
+            self.assertIn('conflicts_with cask: "zed"', cask)
+            self.assertNotIn('Zed i18n.app', cask)
+            for text in generate_scoop_manifests(sample_universal_manifest()).values():
+                app = json.loads(text)
+                self.assertEqual(app["bin"], [["bin\\zed.exe", "zed"]])
+                self.assertEqual(app["shortcuts"], [["Zed.exe", "Zed"]])
+                self.assertIn("Uninstall", " ".join(app["notes"]))
 
     def test_homebrew_uses_region_aware_language_args(self) -> None:
         cask = generate_homebrew_cask(sample_manifest(("pt-BR", "zh-CN", "zh-TW")))
@@ -245,7 +287,7 @@ class PackagingTests(unittest.TestCase):
                 self.assertIn("  on_linux do\n", cask)
                 self.assertIn("arm64_linux:", cask)
                 self.assertIn("x86_64_linux:", cask)
-                self.assertIn('command_wrapper "zed-i18n", content:', cask)
+                self.assertIn('command_wrapper "zed", content:', cask)
                 self.assertIn('exec "#{staged_path}/zed.app/bin/zed" "$@"', cask)
                 self.assertIn("brew upgrade --cask zed-i18n", cask)
                 self.assertIn("brew uninstall --cask zed-i18n", cask)
@@ -299,49 +341,39 @@ class PackagingTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, f"missing {field}"):
                     generate_homebrew_cask(manifest)
 
-    def test_generates_scoop_manifests_with_alias_and_no_pre_uninstall(self) -> None:
-        manifests = generate_scoop_manifests(sample_manifest())
+    def test_scoop_requires_universal_release_for_single_official_install_path(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires a universal release"):
+            generate_scoop_manifests(sample_manifest())
 
-        self.assertEqual(sorted(manifests), ["zed-i18n-ja-JP.json", "zed-i18n-ko-KR.json"])
-        ko_manifest = json.loads(manifests["zed-i18n-ko-KR.json"])
-        self.assertEqual(ko_manifest["version"], "1.4.4-i18n.2")
-        self.assertEqual(ko_manifest["bin"], [["bin\\zed.exe", "zed-i18n"]])
-        self.assertNotIn("pre_uninstall", ko_manifest)
-        self.assertIn("post_install", ko_manifest)
-        self.assertTrue(
-            all("? (Get-Content" not in line for line in ko_manifest["post_install"]),
-            "post_install should use Windows PowerShell 5.1-compatible syntax",
-        )
-        post_install = "\n".join(ko_manifest["post_install"])
-        self.assertNotIn("Set-Content $cfg -Encoding UTF8", post_install)
-        self.assertIn(
-            "[System.IO.File]::WriteAllText($cfg, ($j | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding $false))",
-            post_install,
-        )
-        self.assertEqual(
-            ko_manifest["checkver"],
-            {
-                "url": "https://github.com/LI-NA/zed-i18n/releases/latest",
-                "regex": "/releases/tag/v([\\d.]+-i18n\\.\\d+)",
-            },
-        )
-        self.assertEqual(
-            ko_manifest["architecture"]["64bit"]["url"],
-            "https://github.com/LI-NA/zed-i18n/releases/download/v1.4.4-i18n.2/Zed-i18n-ko-KR-windows-x86_64.zip",
-        )
+    def test_per_language_release_fails_before_writing_any_packaging(self) -> None:
+        manifest_path = self.tmp / "manifest.json"
+        manifest_path.parent.mkdir(parents=True)
+        manifest_path.write_text(json.dumps(sample_manifest()), encoding="utf-8")
+        cask_path = self.tmp / "out" / "zed-i18n.rb"
+        bucket_path = self.tmp / "bucket"
+        with self.assertRaisesRegex(ValueError, "requires a universal release"):
+            generate_packaging_files(manifest_path, cask_path, bucket_path)
+        self.assertFalse(cask_path.exists())
+        self.assertFalse(bucket_path.exists())
+
+    def test_scoop_keeps_package_manager_update_and_settings_behavior(self) -> None:
+        app = json.loads(generate_scoop_manifests(sample_universal_manifest())["zed.json"])
+        self.assertEqual(app["bin"], [["bin\\zed.exe", "zed"]])
+        self.assertNotIn("pre_uninstall", app)
+        self.assertIn("post_install", app)
+        self.assertIn("[System.IO.File]::WriteAllText", "\n".join(app["post_install"]))
 
     def test_generate_packaging_files_writes_cask_and_bucket_files(self) -> None:
         manifest_path = self.tmp / "manifest.json"
         cask_path = self.tmp / "homebrew" / "Casks" / "zed-i18n.rb"
         bucket_path = self.tmp / "scoop" / "bucket"
         manifest_path.parent.mkdir(parents=True)
-        manifest_path.write_text(json.dumps(sample_manifest()), encoding="utf-8")
+        manifest_path.write_text(json.dumps(sample_universal_manifest()), encoding="utf-8")
 
         generate_packaging_files(manifest_path, cask_path, bucket_path)
 
         self.assertIn('cask "zed-i18n"', cask_path.read_text(encoding="utf-8"))
-        self.assertTrue((bucket_path / "zed-i18n-ja-JP.json").exists())
-        self.assertTrue((bucket_path / "zed-i18n-ko-KR.json").exists())
+        self.assertEqual([p.name for p in bucket_path.glob("*.json")], ["zed.json"])
 
     def test_generate_packaging_files_rejects_partial_release_when_expected_locales_are_set(
         self,
@@ -375,47 +407,31 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("auto_updates true", cask)
         self.assertTrue(cask.endswith("\n"))
 
-    def test_generates_universal_scoop_manifest_with_legacy_locale_aliases(self) -> None:
+    def test_generates_scoop_manifest_with_official_package_token(self) -> None:
         manifests = generate_scoop_manifests(sample_universal_manifest())
 
         self.assertEqual(
             sorted(manifests),
-            ["zed-i18n-ja-JP.json", "zed-i18n-ko-KR.json", "zed-i18n.json"],
+            ["zed.json"],
         )
 
-        universal = json.loads(manifests["zed-i18n.json"])
+        universal = json.loads(manifests["zed.json"])
         self.assertEqual(universal["version"], "1.4.4-i18n.2")
         self.assertEqual(
             universal["architecture"]["64bit"]["url"],
             "https://github.com/LI-NA/zed-i18n/releases/download/v1.4.4-i18n.2/Zed-i18n-windows-x86_64.zip",
         )
         self.assertEqual(universal["architecture"]["64bit"]["hash"], "zip-x64")
-        self.assertEqual(universal["shortcuts"], [["Zed.exe", "Zed i18n"]])
+        self.assertEqual(universal["shortcuts"], [["Zed.exe", "Zed"]])
         self.assertEqual(
             universal["env_set"]["ZED_UPDATE_EXPLANATION"],
-            "Run 'scoop update zed-i18n' to update.",
+            "Run 'scoop update zed' to update.",
         )
         self.assertEqual(
             universal["autoupdate"]["architecture"]["arm64"]["url"],
             "https://github.com/LI-NA/zed-i18n/releases/download/v$version/Zed-i18n-windows-aarch64.zip",
         )
-        self.assertNotIn("notes", universal)
-
-        legacy = json.loads(manifests["zed-i18n-ko-KR.json"])
-        # Legacy locale manifests now install the universal zip and keep
-        # updating through it, with a migration note.
-        self.assertEqual(
-            legacy["architecture"]["64bit"]["url"],
-            "https://github.com/LI-NA/zed-i18n/releases/download/v1.4.4-i18n.2/Zed-i18n-windows-x86_64.zip",
-        )
-        self.assertEqual(
-            legacy["autoupdate"]["architecture"]["64bit"]["url"],
-            "https://github.com/LI-NA/zed-i18n/releases/download/v$version/Zed-i18n-windows-x86_64.zip",
-        )
-        self.assertEqual(legacy["shortcuts"], [["Zed.exe", "Zed i18n (ko-KR)"]])
-        notes = "\n".join(legacy["notes"])
-        self.assertIn("every language included", notes)
-        self.assertIn("scoop install zed-i18n", notes)
+        self.assertIn("notes", universal)
 
     def test_generate_packaging_files_accepts_universal_manifest_with_expected_locales(
         self,
@@ -434,9 +450,8 @@ class PackagingTests(unittest.TestCase):
         )
 
         self.assertIn('cask "zed-i18n"', cask_path.read_text(encoding="utf-8"))
-        self.assertTrue((bucket_path / "zed-i18n.json").exists())
-        self.assertTrue((bucket_path / "zed-i18n-ja-JP.json").exists())
-        self.assertTrue((bucket_path / "zed-i18n-ko-KR.json").exists())
+        self.assertTrue((bucket_path / "zed.json").exists())
+        self.assertEqual([p.name for p in bucket_path.glob("*.json")], ["zed.json"])
 
     def test_universal_manifest_without_alias_locales_fails_validation(self) -> None:
         manifest_path = self.tmp / "manifest.json"

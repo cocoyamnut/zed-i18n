@@ -584,6 +584,7 @@ jobs:
           uv run python -m tools.zed_i18n.ci_release metadata \
             --dist-dir release-artifacts \
             --manifest release-artifacts/manifest.json \
+            --installed-identity zed-stable \
             --checksums release-artifacts/SHA256SUMS.txt \
             --release-tag "$RELEASE_TAG" \
             --repository "$GITHUB_REPOSITORY" \

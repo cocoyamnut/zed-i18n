@@ -47,15 +47,19 @@ def generate_packaging_files(
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     _validate_packaging_release(manifest, expected_locales)
 
+    cask = generate_homebrew_cask(manifest)
+    scoop_manifests = generate_scoop_manifests(manifest)
+
     cask_path.parent.mkdir(parents=True, exist_ok=True)
-    cask_path.write_text(generate_homebrew_cask(manifest), encoding="utf-8")
+    cask_path.write_text(cask, encoding="utf-8")
 
     bucket_dir.mkdir(parents=True, exist_ok=True)
-    for filename, content in generate_scoop_manifests(manifest).items():
+    for filename, content in scoop_manifests.items():
         (bucket_dir / filename).write_text(content, encoding="utf-8")
 
 
 def generate_homebrew_cask(manifest: dict[str, Any]) -> str:
+    _validate_installed_identity(manifest)
     _repository_url(manifest)
     if _is_universal_manifest(manifest):
         return _generate_universal_homebrew_cask(manifest)
@@ -124,11 +128,13 @@ def _homebrew_platform_lines(manifest: dict[str, Any], *, locale_specific: bool)
     )
     return [
         "",
+        '  conflicts_with cask: "zed"',
+        "",
         "  on_macos do",
         f'    url "{release_url}/Zed-i18n{locale_segment}-macos-#{{arch}}.dmg"',
         "    auto_updates true",
-        '    app "Zed i18n.app"',
-        '    binary "#{appdir}/Zed i18n.app/Contents/MacOS/cli", target: "zed-i18n"',
+        '    app "Zed.app"',
+        '    binary "#{appdir}/Zed.app/Contents/MacOS/cli", target: "zed"',
         "  end",
         "",
         "  on_linux do",
@@ -136,7 +142,7 @@ def _homebrew_platform_lines(manifest: dict[str, Any], *, locale_specific: bool)
         # Keep the entire bundle in the Caskroom, preserving relative library
         # and resource paths. The CLI's bundled uninstaller targets install.sh
         # locations, so package-manager installs must not invoke it.
-        '    command_wrapper "zed-i18n", content: <<~SH',
+        '    command_wrapper "zed", content: <<~SH',
         "      #!/bin/sh",
         '      for arg in "$@"; do',
         '        case "$arg" in',
@@ -151,12 +157,12 @@ def _homebrew_platform_lines(manifest: dict[str, Any], *, locale_specific: bool)
         '      exec "#{staged_path}/zed.app/bin/zed" "$@"',
         "    SH",
         "    caveats <<~EOS",
-        "      Run zed-i18n to launch. Desktop menu entries are not installed.",
+        "      Run zed to launch. Desktop menu entries are not installed.",
         "      Linux requires system ALSA and Vulkan libraries and a working graphics driver.",
         "    EOS",
         "  end",
         "",
-        '  name "Zed i18n"',
+        '  name "Zed"',
         '  desc "Localized build of the Zed editor"',
         f'  homepage "{repository_url}"',
         "end",
@@ -191,7 +197,7 @@ def _scoop_app_manifest(
                 "hash": arm64["sha256"],
             },
         },
-        "bin": [["bin\\zed.exe", "zed-i18n"]],
+        "bin": [["bin\\zed.exe", "zed"]],
         "shortcuts": [["Zed.exe", shortcut_name]],
         "env_set": {"ZED_UPDATE_EXPLANATION": update_message},
         "post_install": POST_INSTALL_LINES,
@@ -213,43 +219,21 @@ def _scoop_app_manifest(
             },
         },
     }
-    if notes:
-        app["notes"] = notes
+    app["notes"] = [
+        "Uninstall any other Zed Scoop package before installing this package;",
+        "it uses the same zed command and Zed shortcut as official stable Zed.",
+        *(notes or []),
+    ]
     return app
 
 
 def generate_scoop_manifests(manifest: dict[str, Any]) -> dict[str, str]:
+    _validate_installed_identity(manifest)
     _repository_url(manifest)
     if _is_universal_manifest(manifest):
         return _generate_universal_scoop_manifests(manifest)
 
-    version = scoop_version(manifest)
-    locales = sorted(_locales_for(manifest, platform="windows", kind="portable_app"))
-    if not locales:
-        raise ValueError("release manifest has no windows portable_app assets")
-
-    output = {}
-    for locale in locales:
-        assets = _assets_for_locale(
-            manifest,
-            locale=locale,
-            platform="windows",
-            kind="portable_app",
-        )
-        x64 = _required_asset(assets, "x86_64", locale, "windows")
-        arm64 = _required_asset(assets, "aarch64", locale, "windows")
-        app = _scoop_app_manifest(
-            repository_url=_repository_url(manifest),
-            version=version,
-            description=f"Localized build of the Zed editor ({locale})",
-            x64=x64,
-            arm64=arm64,
-            shortcut_name=f"Zed i18n ({locale})",
-            update_message=f"Run 'scoop update zed-i18n-{locale}' to update.",
-            autoupdate_locale=locale,
-        )
-        output[f"zed-i18n-{locale}.json"] = json.dumps(app, indent=2, ensure_ascii=False) + "\n"
-    return output
+    raise ValueError("official-identity Scoop packaging requires a universal release")
 
 
 def _generate_universal_scoop_manifests(manifest: dict[str, Any]) -> dict[str, str]:
@@ -257,41 +241,33 @@ def _generate_universal_scoop_manifests(manifest: dict[str, Any]) -> dict[str, s
     assets = _universal_assets_for(manifest, platform="windows", kind="portable_app")
     x64 = _required_asset(assets, "x86_64", None, "windows")
     arm64 = _required_asset(assets, "aarch64", None, "windows")
-    # The manifest keeps one `app` alias per legacy locale; those labels are
-    # exactly the per-locale Scoop manifests that must keep working.
-    legacy_locales = sorted(_locales_for(manifest, platform="windows", kind="app"))
-
-    output = {}
-    universal = _scoop_app_manifest(
+    app = _scoop_app_manifest(
         repository_url=_repository_url(manifest),
         version=version,
         description="Localized build of the Zed editor",
         x64=x64,
         arm64=arm64,
-        shortcut_name="Zed i18n",
-        update_message="Run 'scoop update zed-i18n' to update.",
+        shortcut_name="Zed",
+        update_message="Run 'scoop update zed' to update.",
         autoupdate_locale=None,
+        notes=[
+            "The package is now named zed, matching the official installation path.",
+            "Uninstall zed-i18n or zed-i18n-<locale> before migrating, then run:",
+            "scoop install zed-i18n/zed (with this repository added as bucket zed-i18n).",
+        ],
     )
-    output["zed-i18n.json"] = json.dumps(universal, indent=2, ensure_ascii=False) + "\n"
+    return {"zed.json": json.dumps(app, indent=2, ensure_ascii=False) + "\n"}
 
-    for locale in legacy_locales:
-        app = _scoop_app_manifest(
-            repository_url=_repository_url(manifest),
-            version=version,
-            description=f"Localized build of the Zed editor ({locale})",
-            x64=x64,
-            arm64=arm64,
-            shortcut_name=f"Zed i18n ({locale})",
-            update_message=f"Run 'scoop update zed-i18n-{locale}' to update.",
-            autoupdate_locale=None,
-            notes=[
-                "zed-i18n now ships a single build with every language included,",
-                "and this package installs that build. To switch to the plain",
-                f"package, run: scoop uninstall zed-i18n-{locale}; scoop install zed-i18n",
-            ],
+
+def _validate_installed_identity(manifest: dict[str, Any]) -> None:
+    # Old published manifests point at isolated Zed i18n bundles. Never render
+    # Zed.app/zed package entries for them. This is a build declaration, not
+    # verification of downloaded binaries; native release checks still apply.
+    if manifest.get("installed_identity") != "zed-stable":
+        raise ValueError(
+            "release manifest installed_identity must be 'zed-stable'; "
+            "rebuild and publish matching binaries before generating packaging"
         )
-        output[f"zed-i18n-{locale}.json"] = json.dumps(app, indent=2, ensure_ascii=False) + "\n"
-    return output
 
 
 def _repository_url(manifest: dict[str, Any]) -> str:
@@ -449,8 +425,8 @@ def _validate_universal_packaging_release(
                 + ", ".join(missing)
             )
 
-    # Legacy Scoop manifests are generated from the windows app aliases, so
-    # the alias locales must cover every expected locale.
+    # App aliases remain the release manifest contract for legacy updater
+    # clients; verify locale coverage even though Scoop now has one package.
     alias_locales = _locales_for(manifest, platform="windows", kind="app")
     if not alias_locales:
         raise ValueError("universal release manifest has no locale alias app assets")

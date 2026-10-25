@@ -35,7 +35,7 @@ locales.each do |locale|
           raise "Incorrect Linux artifacts: #{artifact_types}" unless artifact_types == ["Cask::Artifact::CommandWrapper"]
           raise "Linux updates must use Homebrew" if cask.auto_updates
           name, options = cask.artifacts.first.to_args
-          raise "Incorrect Linux command name" unless name.to_s == "zed-i18n"
+          raise "Incorrect Linux command name" unless name.to_s == "zed"
           content = options.fetch(:content)
           raise "Incorrect bundle path" unless content.include?("#{cask.staged_path}/zed.app/bin/zed")
           raise "Missing argument forwarding" unless content.include?('"$@"')

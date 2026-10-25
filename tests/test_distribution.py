@@ -246,27 +246,51 @@ fn app_menus() -> Vec<Menu> {
         path.write_text(text, encoding="utf-8")
         return path
 
-    def test_loads_distribution_config_with_safe_defaults(self) -> None:
+    def test_loads_distribution_config_with_official_stable_defaults(self) -> None:
         config = load_distribution_config(self.write_config(""))
 
-        self.assertEqual(config.product_name, "Zed i18n")
-        self.assertEqual(config.macos_bundle_id, "dev.zed-i18n.Zed")
-        self.assertEqual(config.linux_app_id, "dev.zed-i18n.Zed")
-        self.assertEqual(config.windows_app_identifier, "ZedI18n-Editor-Stable")
+        self.assertEqual(config.product_name, "Zed")
+        self.assertEqual(config.macos_bundle_id, "dev.zed.Zed")
+        self.assertEqual(config.linux_app_id, "dev.zed.Zed")
+        self.assertEqual(config.windows_app_identifier, "Zed-Editor-Stable")
         self.assertEqual(
             config.windows_mutex,
-            f"{config.windows_app_identifier}-Instance-Mutex",
+            "Zed-Stable-Instance-Mutex",
         )
-        self.assertEqual(config.windows_app_id, "{{48948123-2766-49EA-9C78-31B8096DE3D6}")
+        self.assertEqual(config.windows_app_id, "{{2DB0DA96-CA55-49BB-AF4F-64AF36A86712}")
         self.assertTrue(config.update_enabled)
 
-    def test_repository_config_matches_windows_runtime_mutex(self) -> None:
+    def test_repository_config_matches_upstream_installer_mutex(self) -> None:
         config = load_distribution_config(Path.cwd() / "config" / "distribution.toml")
 
         self.assertEqual(
             config.windows_mutex,
-            f"{config.windows_app_identifier}-Instance-Mutex",
+            "Zed-Stable-Instance-Mutex",
         )
+
+    def test_official_identity_keeps_fork_update_provenance(self) -> None:
+        config = load_distribution_config(Path.cwd() / "config/distribution.toml")
+        env = distribution_build_env(config, {}, None, "v1.25.2-i18n.2", "cocoyamnut/zed-i18n")
+        self.assertEqual(config.product_name, "Zed")
+        self.assertEqual(config.product_slug, "zed-i18n")
+        self.assertEqual(config.publisher_url, "https://github.com/cocoyamnut/zed-i18n")
+        self.assertEqual(env["ZED_I18N_UPDATE_MANIFEST_URL"], "https://github.com/cocoyamnut/zed-i18n/releases/latest/download/manifest.json")
+        self.assertEqual(env["ZED_I18N_RELEASE_TAG"], "v1.25.2-i18n.2")
+        self.assertEqual(env["ZED_I18N_REVISION"], "2")
+        self.assertNotIn("ZED_I18N_LOCALE", env)
+
+    def test_preserves_official_explorer_verb_identity(self) -> None:
+        config = load_distribution_config(Path.cwd() / "config" / "distribution.toml")
+        apply_distribution_patches(self.zed_root, config)
+        appx = (self.zed_root / "crates/explorer_command_injector/AppxManifest.xml").read_text()
+        self.assertIn('Id="OpenWithZed"', appx)
+        self.assertNotIn('OpenWithZedI18n', appx)
+        self.assertIn('Name="ZedIndustries.Zed"', appx)
+        self.assertEqual(config.windows_app_user_id, "ZedIndustries.Zed")
+        self.assertEqual(config.windows_appx_full_name, "ZedIndustries.Zed_1.0.0.0_neutral__japxn1gcva8rg")
+        self.assertEqual(config.windows_registry_value, "Zed")
+        self.assertEqual(config.windows_setup_name, "Zed")
+        self.assertEqual(config.windows_shell_name_short, "Z&ed")
 
     def test_applies_minimal_identity_about_and_updater_patches(self) -> None:
         config = load_distribution_config(self.write_config(""))
@@ -304,28 +328,28 @@ fn app_menus() -> Vec<Menu> {
         self.assertNotIn("ZED_I18N_REPOSITORY", about)
         self.assertNotIn("(zed-i18n {locale}", about)
         self.assertIn(
-            'ReleaseChannel::Stable => "ZedI18n-Editor-Stable"',
+            'ReleaseChannel::Stable => "Zed-Editor-Stable"',
             release_channel,
         )
-        self.assertIn('ReleaseChannel::Stable => "dev.zed-i18n.Zed"', release_channel)
-        self.assertIn('identifier = "dev.zed-i18n.Zed"', cargo_toml)
-        self.assertIn('name = "Zed i18n"', cargo_toml)
-        self.assertIn('$appId = "{{48948123-2766-49EA-9C78-31B8096DE3D6}"', bundle_windows)
-        self.assertNotIn('$appId = "{{48948123-2766-49EA-9C78-31B8096DE3D6}}"', bundle_windows)
-        self.assertIn('$appName = "Zed i18n"', bundle_windows)
+        self.assertIn('ReleaseChannel::Stable => "dev.zed.Zed"', release_channel)
+        self.assertIn('identifier = "dev.zed.Zed"', cargo_toml)
+        self.assertIn('name = "Zed"', cargo_toml)
+        self.assertIn('$appId = "{{2DB0DA96-CA55-49BB-AF4F-64AF36A86712}"', bundle_windows)
+        self.assertNotIn('$appId = "{{2DB0DA96-CA55-49BB-AF4F-64AF36A86712}}"', bundle_windows)
+        self.assertIn('$appName = "Zed"', bundle_windows)
         self.assertIn(
-            '$appMutex = "ZedI18n-Editor-Stable-Instance-Mutex"',
+            '$appMutex = "Zed-Stable-Instance-Mutex"',
             bundle_windows,
         )
         self.assertIn('$appExeName = "Zed"', bundle_windows)
-        self.assertIn('"stable" => ("app-icon.ico", "Zed i18n")', windows_resources)
+        self.assertIn('"stable" => ("app-icon.ico", "Zed")', windows_resources)
         self.assertIn('"preview" => ("app-icon-preview.ico", "Zed Preview")', windows_resources)
         self.assertIn(
-            'feature = "stable" => { "Software\\\\Classes\\\\ZedI18nContextMenu" },',
+            'feature = "stable" => { "Software\\\\Classes\\\\ZedContextMenu" },',
             explorer_command_injector,
         )
         self.assertIn(
-            'HSTRING::from("Open with Zed i18n")',
+            'HSTRING::from("Open with Zed")',
             explorer_command_injector,
         )
         self.assertIn(

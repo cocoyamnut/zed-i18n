@@ -83,6 +83,30 @@ class ZedPatchContractTests(unittest.TestCase):
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
 
+    def test_distribution_preserves_pinned_official_stable_identity(self) -> None:
+        # Read the real pinned upstream files, not duplicated guesses in fixtures.
+        config = load_distribution_config(self.root / "config/distribution.toml")
+        identity_files = (
+            "crates/release_channel/src/lib.rs",
+            "crates/zed/Cargo.toml",
+            "script/bundle-linux",
+            "script/bundle-windows.ps1",
+            "crates/windows_resources/src/windows_resources.rs",
+            "crates/explorer_command_injector/AppxManifest.xml",
+        )
+        originals = {name: (self.zed_root / name).read_text() for name in identity_files}
+        apply_distribution_patches(self.zed_root, config)
+        for name, original in originals.items():
+            with self.subTest(path=name):
+                self.assertEqual((self.zed_root / name).read_text(), original)
+        installer = "crates/zed/resources/windows/zed.iss"
+        original = (self.source_zed_root / installer).read_text()
+        patched = (self.zed_root / installer).read_text()
+        for line in original.splitlines():
+            if line.startswith(("AppId=", "AppName=", "DefaultDirName=", "AppMutex=")):
+                self.assertIn(line, patched.splitlines())
+        self.assertIn("get_i18n_release_asset", (self.zed_root / "crates/auto_update/src/auto_update.rs").read_text())
+
     def test_current_zed_checkout_accepts_release_patch_sequence(self) -> None:
         config = load_distribution_config(self.root / "config" / "distribution.toml")
 
@@ -114,14 +138,14 @@ class ZedPatchContractTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("i18n_build: Option<SharedString>", zed_rs)
-        self.assertIn('ReleaseChannel::Stable => "dev.zed-i18n.Zed"', release_channel)
-        self.assertIn('identifier = "dev.zed-i18n.Zed"', zed_cargo_toml)
+        self.assertIn('ReleaseChannel::Stable => "dev.zed.Zed"', release_channel)
+        self.assertIn('identifier = "dev.zed.Zed"', zed_cargo_toml)
         self.assertIn("get_i18n_release_asset", auto_update)
         self.assertIn(
-            '"Software\\\\Classes\\\\ZedI18nContextMenu"',
+            '"Software\\\\Classes\\\\ZedContextMenu"',
             explorer_command_injector,
         )
-        self.assertIn('HSTRING::from("Open with Zed i18n")', explorer_command_injector)
+        self.assertIn('HSTRING::from("Open with Zed")', explorer_command_injector)
         self.assertNotIn("remote_server", bundle_linux)
         self.assertNotIn("remote_server", bundle_macos)
         self.assertNotIn("BuildRemoteServer", bundle_windows)

@@ -1396,6 +1396,7 @@ def generate_release_metadata(
     run_id: str | None,
     expected_assets: Iterable[str] | None = None,
     alias_locales: Iterable[str] | None = None,
+    installed_identity: str | None = None,
 ) -> None:
     config = load_project_config(root)
     excluded = {manifest_path.resolve(), checksums_path.resolve()}
@@ -1447,6 +1448,12 @@ def generate_release_metadata(
         "asset_count": len(assets),
         "assets": assets,
     }
+    # An explicit build declaration, never inferred when repackaging old assets.
+    # Native release checks must still verify the payload before publication.
+    if installed_identity is not None:
+        if installed_identity != "zed-stable":
+            raise ValueError(f"unsupported installed identity: {installed_identity}")
+        manifest["installed_identity"] = installed_identity
     write_json(manifest_path, manifest)
     checksums_path.write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
 
@@ -1564,6 +1571,8 @@ def build_parser() -> argparse.ArgumentParser:
     metadata_parser.add_argument("--release-tag")
     metadata_parser.add_argument("--repository")
     metadata_parser.add_argument("--run-id")
+    metadata_parser.add_argument("--installed-identity", choices=("zed-stable",),
+                                 help="Declare identity of newly built artifacts; never use for legacy binaries.")
     metadata_parser.add_argument("--mode", choices=BUILD_MODES, default="universal")
     metadata_parser.add_argument("--languages")
     metadata_parser.add_argument("--platforms")
@@ -1675,6 +1684,7 @@ def main(argv: list[str] | None = None) -> int:
                 run_id=args.run_id,
                 expected_assets=expected_assets,
                 alias_locales=alias_locales,
+                installed_identity=args.installed_identity,
             )
             return 0
         if args.command == "release-notes":
